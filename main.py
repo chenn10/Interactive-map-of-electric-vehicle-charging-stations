@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+import dash
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.express as px
@@ -92,10 +93,43 @@ app = Dash(__name__)
 
 # 頁面佈局
 app.layout = html.Div([
-    html.H1("台灣電動車充電站地圖", style={'textAlign': 'center'}),
-    dcc.Graph(id='map', style={'height': '600px'}),  # 地圖
-    html.Div(id='info', style={'padding': '20px'})  # 顯示點選的充電站資訊
-])
+    html.H1("台灣電動車充電站地圖", style={'textAlign': 'center', 'color': 'white', 'backgroundColor': 'black'}),
+    html.Div([
+        dcc.Graph(id='map', style={'height': '600px', 'backgroundColor': 'black'}),  # 地圖
+        # 彈窗容器
+        html.Div([
+            html.Div([
+                html.Button('×', id='close-modal', n_clicks=0, 
+                           style={'position': 'absolute', 'top': '10px', 'right': '15px', 
+                                  'background': 'none', 'border': 'none', 'fontSize': '24px', 
+                                  'color': 'white', 'cursor': 'pointer', 'zIndex': '1001'}),
+                html.Div(id='modal-content', style={'padding': '0'})
+            ], style={
+                'position': 'relative',
+                'backgroundColor': 'black',
+                'borderRadius': '10px',
+                'boxShadow': '0 4px 20px rgba(0,0,0,0.5)',
+                'maxWidth': '800px',
+                'maxHeight': '600px',
+                'margin': 'auto',
+                'overflow': 'auto'
+            })
+        ], id='modal', style={
+            'display': 'none',
+            'position': 'fixed',
+            'top': '0',
+            'left': '0',
+            'width': '100%',
+            'height': '100%',
+            'backgroundColor': 'rgba(0,0,0,0.8)',
+            'zIndex': '1000',
+            'alignItems': 'center',
+            'justifyContent': 'center',
+            'transition': 'opacity 0.3s ease'
+        })
+    ], style={'position': 'relative'}),
+    html.Div(id='info', style={'padding': '20px', 'backgroundColor': 'black', 'color': 'white'})  # 顯示點選的充電站資訊
+], style={'backgroundColor': 'black', 'minHeight': '100vh'})
 
 # 定義地圖初始狀態
 @app.callback(
@@ -113,7 +147,97 @@ def update_map(click_data):
     fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
     return fig
 
-# 點擊地圖更新資訊
+# 彈窗顯示圓餅圖
+@app.callback(
+    [Output('modal', 'style'),
+     Output('modal-content', 'children')],
+    [Input('map', 'clickData'),
+     Input('close-modal', 'n_clicks')]
+)
+def toggle_modal(click_data, close_clicks):
+    ctx = dash.callback_context
+    
+    if not ctx.triggered:
+        return {'display': 'none'}, None
+    
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    # 如果點擊關閉按鈕，隱藏彈窗
+    if trigger_id == 'close-modal':
+        return {
+            'display': 'none',
+            'position': 'fixed',
+            'top': '0',
+            'left': '0',
+            'width': '100%',
+            'height': '100%',
+            'backgroundColor': 'rgba(0,0,0,0.8)',
+            'zIndex': '1000',
+            'alignItems': 'center',
+            'justifyContent': 'center',
+            'transition': 'opacity 0.3s ease'
+        }, None
+    
+    # 如果點擊地圖上的城市，顯示彈窗
+    elif trigger_id == 'map' and click_data:
+        try:
+            selected_city = click_data['points'][0]['hovertext']
+            charging_data = fetch_city_data(selected_city)
+            
+            if not charging_data:
+                modal_content = html.Div([
+                    html.H3(f"{selected_city}", style={'color': 'white', 'textAlign': 'center'}),
+                    html.P("無充電站數據", style={'color': 'white', 'textAlign': 'center', 'fontSize': '18px'})
+                ])
+            else:
+                df = pd.DataFrame(charging_data)
+                if 'StationID' not in df.columns or 'ChargingRate' not in df.columns:
+                    modal_content = html.Div([
+                        html.H3(f"{selected_city}", style={'color': 'white', 'textAlign': 'center'}),
+                        html.P("充電站數據無法解析", style={'color': 'white', 'textAlign': 'center', 'fontSize': '18px'})
+                    ])
+                else:
+                    # 固定圖例字數
+                    df['ChargingRate'] = df['ChargingRate'].str.slice(0, 15) + '...'
+                    
+                    # 創建圓餅圖
+                    pie_chart = dcc.Graph(figure=px.pie(
+                        df,
+                        names="ChargingRate",
+                        title=f"{selected_city} 充電站計費方式分布",
+                        color_discrete_sequence=px.colors.qualitative.Set1
+                    ).update_layout(
+                        plot_bgcolor='black',
+                        paper_bgcolor='black',
+                        font_color='white',
+                        title_font_color='white',
+                        height=500,
+                        transition_duration=500  # 添加過渡動畫
+                    ))
+                    
+                    modal_content = pie_chart
+            
+            return {
+                'display': 'flex',
+                'position': 'fixed',
+                'top': '0',
+                'left': '0',
+                'width': '100%',
+                'height': '100%',
+                'backgroundColor': 'rgba(0,0,0,0.8)',
+                'zIndex': '1000',
+                'alignItems': 'center',
+                'justifyContent': 'center',
+                'transition': 'opacity 0.3s ease'
+            }, modal_content
+            
+        except Exception as e:
+            logging.error(f"Error processing data for {click_data}: {e}")
+            return {'display': 'none'}, None
+    
+    return {'display': 'none'}, None
+
+# 點擊地圖更新底部資訊
 @app.callback(
     Output('info', 'children'),
     Input('map', 'clickData')
@@ -124,32 +248,27 @@ def display_city_info(click_data):
             selected_city = click_data['points'][0]['hovertext']  # 點選的城市名稱
             charging_data = fetch_city_data(selected_city)
             if not charging_data:
-                return html.P(f"{selected_city} 無充電站數據")
+                return html.P(f"{selected_city} 無充電站數據", style={'color': 'white'})
 
             # 生成數據表格
             df = pd.DataFrame(charging_data)
             if 'StationID' not in df.columns or 'ChargingRate' not in df.columns:
-                return html.P(f"{selected_city} 的充電站數據無法解析")
+                return html.P(f"{selected_city} 的充電站數據無法解析", style={'color': 'white'})
 
-            # 固定圖例字數
-            df['ChargingRate'] = df['ChargingRate'].str.slice(0, 15) + '...'  # 限制圖例字數為15
-
+            # 顯示基本統計資訊
+            total_stations = len(df)
+            unique_rates = df['ChargingRate'].nunique()
+            
             return html.Div([
-                html.H3(f"{selected_city} 充電站數據"),
-                dcc.Graph(figure=px.bar(
-                    df,
-                    x="StationID",
-                    y=[1]*len(df),
-                    color="ChargingRate",
-                    title=f"{selected_city} 充電站計費方式",
-                    labels={"StationID": "充電站 ID", "ChargingRate": "計費方式"},
-                    color_discrete_sequence=px.colors.qualitative.Set1
-                ).update_traces(showlegend=True).update_yaxes(visible=False))
+                html.H3(f"{selected_city} 充電站統計", style={'color': 'white'}),
+                html.P(f"總充電站數量: {total_stations}", style={'color': 'white', 'fontSize': '16px'}),
+                html.P(f"不同計費方式: {unique_rates} 種", style={'color': 'white', 'fontSize': '16px'}),
+                html.P("點擊上方地圖查看詳細分布圖表", style={'color': 'lightgray', 'fontSize': '14px', 'fontStyle': 'italic'})
             ])
         except Exception as e:
             logging.error(f"Error processing data for {click_data}: {e}")
-            return html.P("發生錯誤，無法顯示數據")
-    return "請點選地圖上的城市"
+            return html.P("發生錯誤，無法顯示數據", style={'color': 'white'})
+    return html.P("請點選地圖上的城市查看充電站資訊", style={'color': 'white', 'textAlign': 'center', 'fontSize': '18px'})
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
