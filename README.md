@@ -5,4 +5,5 @@
 ，並以圖表方式呈現不同站點的計費方式分佈。
 
 執行時請於終端輸入:py main.py
-執行影片連結如下:https://youtu.be/2TMFZ5S-X08
+
+執行影片連結如下:https://youtu.be/05nitEmVnHE
